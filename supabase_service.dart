@@ -2,7 +2,6 @@
 import 'dart:core';
 import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart';
 
 /// Supabase ラッパー（シングルトン）
 class SupaService {
@@ -355,9 +354,10 @@ class SupaService {
           .maybeSingle();
       if (exist != null) return (exist['id'] as num).toInt();
 
+      final companyId = await myCompanyId();
       final inserted = await _c
           .from('varieties')
-          .insert({'name': trimmed})
+          .insert({'name': trimmed, 'company_id': companyId})
           .select('id')
           .single();
       return (inserted['id'] as num).toInt();
@@ -404,23 +404,24 @@ class SupaService {
     final d = date ?? DateTime.now();
     final dateStr = _yyyyMmDd(d);
     final lotCode = _generateLotCode();
-    try {
-      final inserted = await _c
-          .from('harvest_lots')
-          .insert({
-            'date': dateStr,
-            'variety_id': varietyId,
-            'field': _sanitize(locName),
-            'cases': cases,
-            'lot_code': lotCode,
-            if (memo != null && memo.isNotEmpty) 'memo': _sanitize(memo),
-          })
-          .select('id, lot_code')
-          .single();
-      return Map<String, dynamic>.from(inserted as Map);
-    } catch (e) {
-      throw Exception('収穫データの保存に失敗しました: $e');
-    }
+    final companyId = await myCompanyId();
+    final uid = _c.auth.currentUser?.id;
+
+    final inserted = await _c
+        .from('harvest_lots')
+        .insert({
+          'company_id': companyId,
+          'variety_id': varietyId,
+          'date': dateStr,
+          'field': _sanitize(locName),
+          'cases': cases,
+          'lot_code': lotCode,
+          if (uid != null) 'created_by': uid,
+          if (memo != null && memo.isNotEmpty) 'memo': _sanitize(memo),
+        })
+        .select('id, lot_code')
+        .single();
+    return Map<String, dynamic>.from(inserted as Map);
   }
 
   Future<String?> _getLocationName(int locationId) async {
@@ -455,12 +456,16 @@ class SupaService {
     required String unit,
     String? memo,
   }) async {
+    final companyId = await myCompanyId();
+    final uid = _c.auth.currentUser?.id;
     final map = <String, dynamic>{
+      'company_id': companyId,
       'lot_id': lotId,
       'location_id': locationId,
       'direction': direction,
       'qty': qty,
       'unit': unit,
+      if (uid != null) 'created_by': uid,
       if (memo != null && memo.trim().isNotEmpty) 'memo': _sanitizeMemo(memo),
     };
     await _c.from('moves').insert(map);
@@ -495,6 +500,42 @@ class SupaService {
       memo: _sanitizeMemo(memo),
       locationId: toLocationId,
     );
+  }
+
+  /// 在庫移動（+入庫 / -出庫）。locationId 必須。
+  Future<void> insertMove({
+    required int lotId,
+    required int delta,
+    required int locationId,
+  }) async {
+    // 出庫時は在庫チェック
+    if (delta < 0) {
+      final inv = await fetchInventoryByLotId(lotId);
+      final currentStock =
+          (inv?['on_hand'] is num) ? (inv!['on_hand'] as num).toInt() : 0;
+      final requested = -delta;
+      if (requested > currentStock) {
+        throw Exception('在庫不足: 出庫数量が現在庫($currentStock)を超えています');
+      }
+    }
+
+    if (delta > 0) {
+      await moveIn(
+        lotId: lotId,
+        locationId: locationId,
+        qty: delta,
+        unit: 'ケース',
+        memo: 'QRスキャン入庫',
+      );
+    } else if (delta < 0) {
+      await moveOut(
+        lotId: lotId,
+        locationId: locationId,
+        qty: -delta,
+        unit: 'ケース',
+        memo: 'QRスキャン出庫',
+      );
+    }
   }
 
   String? _sanitize(String? s) => s?.replaceAll('\u0000', '');
@@ -578,79 +619,52 @@ class SupaService {
   /// 現在のユーザーID
   String? get currentUserId => _c.auth.currentUser?.id;
 
-  /// 在庫移動（+入庫 / -出庫）。locationId 必須。
-  Future<void> insertMove({
-    required int lotId,
-    required int delta,
-    required int locationId,
-  }) async {
-    // 出庫時は在庫チェック
-    if (delta < 0) {
-      final inv = await fetchInventoryByLotId(lotId);
-      final currentStock =
-          (inv?['on_hand'] is num) ? (inv!['on_hand'] as num).toInt() : 0;
-      final requested = -delta;
-      if (requested > currentStock) {
-        throw Exception('在庫不足: 出庫数量が現在庫($currentStock)を超えています');
-      }
-    }
-
-    if (delta > 0) {
-      await moveIn(
-        lotId: lotId,
-        locationId: locationId,
-        qty: delta,
-        unit: 'ケース',
-        memo: 'QRスキャン入庫',
-      );
-    } else if (delta < 0) {
-      await moveOut(
-        lotId: lotId,
-        locationId: locationId,
-        qty: -delta,
-        unit: 'ケース',
-        memo: 'QRスキャン出庫',
-      );
-    }
+  /// 現在のユーザーの company_id を取得
+  Future<int> myCompanyId() async {
+    final v = await _myCompanyIdOrNull();
+    if (v == null) throw Exception('まだ会社に参加していません');
+    return v;
   }
 
-  /// 日別の入庫・出庫サマリを取得
-  Future<List<Map<String, dynamic>>> fetchDailyInOutSummary() async {
-    try {
-      final rows = await _c
-          .from('moves')
-          .select('direction, qty, created_at')
-          .order('created_at', ascending: true);
-
-      // Dart側で日付ごとに集計
-      final Map<String, Map<String, int>> summary = {};
-
-      for (final row in rows) {
-        final dir = row['direction'] as String;
-        final qty = (row['qty'] as num).toInt();
-        final date = DateTime.parse(row['created_at']).toLocal();
-        final dateStr = DateFormat('yyyy-MM-dd').format(date);
-
-        summary.putIfAbsent(dateStr, () => {'IN': 0, 'OUT': 0});
-        summary[dateStr]![dir] = (summary[dateStr]![dir] ?? 0) + qty;
-      }
-
-      // List<Map> に変換
-      return summary.entries.map((e) {
-        return {
-          'date': DateTime.parse(e.key),
-          'inQty': e.value['IN'] ?? 0,
-          'outQty': e.value['OUT'] ?? 0,
-        };
-      }).toList()
-        ..sort(
-            (a, b) => (a['date'] as DateTime).compareTo(b['date'] as DateTime));
-    } catch (e) {
-      throw Exception('日別入出庫サマリの取得に失敗しました: $e');
-    }
+  Future<int?> _myCompanyIdOrNull() async {
+    final uid = _c.auth.currentUser?.id;
+    if (uid == null) return null;
+    final row =
+        await _c.from('users').select('company_id').eq('id', uid).maybeSingle();
+    if (row == null) return null;
+    final v = row['company_id'];
+    if (v == null) return null;
+    return (v as num).toInt();
   }
 
-  /// 時間帯別の入庫・出庫サマリを取得（モバイル最適化版）
+  String _rand6() {
+    final r = Random();
+    return List.generate(6, (_) => r.nextInt(10).toString()).join();
+  }
+
+  /// 初回起動用：ユーザーが未所属なら自社を作って admin で紐づけ
+  Future<void> devBootstrapIfNeeded() async {
+    final uid = _c.auth.currentUser?.id;
+    if (uid == null) return;
+    final cid = await _myCompanyIdOrNull();
+    if (cid != null) return; // すでに所属済み
+
+    // 1) 会社作成
+    final company = await _c
+        .from('companies')
+        .insert({'name': 'My Company', 'invite_code': _rand6()})
+        .select('id')
+        .single();
+    final companyId = (company['id'] as num).toInt();
+
+    // 2) users に自分を admin で登録
+    await _c.from('users').insert({
+      'id': uid,
+      'company_id': companyId,
+      'role': 'admin',
+    });
+  }
+
   Future<List<Map<String, dynamic>>> fetchHourlyInOutSummary({
     required DateTime date,
     String? varietyName, // nullなら全品種
@@ -704,7 +718,6 @@ class SupaService {
     }
   }
 
-  /// 月間（日別）サマリ：指定年月
   Future<List<Map<String, dynamic>>> fetchDailyInOutSummaryForMonth({
     required int year,
     required int month,
@@ -747,7 +760,6 @@ class SupaService {
     }
   }
 
-  /// 年間（月別）サマリ：指定年
   Future<List<Map<String, dynamic>>> fetchMonthlyInOutSummaryForYear({
     required int year,
     String? varietyName,
@@ -785,41 +797,5 @@ class SupaService {
     } catch (e) {
       throw Exception('年間（月別）サマリ取得に失敗しました: $e');
     }
-  }
-
-  /// 移動履歴を取得（範囲指定・フィルタリング・ページネーション対応）
-  Future<List<Map<String, dynamic>>> fetchMoveHistoryRange({
-    DateTime? fromUtc,
-    DateTime? toUtc,
-    String? varietyName,
-    String? locationName,
-    String? direction, // 'IN' | 'OUT' | null
-    String orderBy = 'created_at',
-    bool descending = true,
-    int limit = 500,
-    int offset = 0,
-  }) async {
-    var q = _c.from('move_history_view').select(
-        'created_at,direction,qty,unit,memo,variety_name,location_name');
-
-    // 先に filter
-    if (fromUtc != null) q = q.gte('created_at', fromUtc.toIso8601String());
-    if (toUtc != null) q = q.lt('created_at', toUtc.toIso8601String());
-    if (varietyName != null && varietyName.isNotEmpty) {
-      q = q.eq('variety_name', varietyName);
-    }
-    if (locationName != null && locationName.isNotEmpty) {
-      q = q.eq('location_name', locationName);
-    }
-    if (direction != null && (direction == 'IN' || direction == 'OUT')) {
-      q = q.eq('direction', direction);
-    }
-
-    // 最後に order / range → await
-    final rows = await q
-        .order(orderBy, ascending: !descending)
-        .range(offset, offset + limit - 1);
-
-    return List<Map<String, dynamic>>.from(rows as List);
   }
 }
