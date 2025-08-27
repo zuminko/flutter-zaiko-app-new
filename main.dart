@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:app_links/app_links.dart';
+import 'package:app_links/app_links.dart'; // ← uni_links から app_links に変更
 import 'dart:async';
 
-import 'login_screen.dart';
-import 'home_screen.dart';
-import 'reset_password_screen.dart';
-import 'supabase_service.dart';
+import 'inventory_list_screen.dart';
+import 'harvest_input_screen.dart';
+import 'history_screen.dart';
+import 'manage_varieties_screen.dart';
+import 'manage_locations_screen.dart';
+import 'reset_password_screen.dart'; // ← 作成済みなら
 
 final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -20,11 +22,6 @@ Future<void> main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
-  final client = Supabase.instance.client;
-  if (client.auth.currentSession == null) {
-    await client.auth.signInAnonymously();
-  }
-  await SupaService.i.devBootstrapIfNeeded(); // ★これを追加
   runApp(const MyApp());
 }
 
@@ -82,44 +79,7 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navigatorKey,
       title: '在庫管理',
       theme: ThemeData(primarySwatch: Colors.green),
-      home: SplashScreen(),
-    );
-  }
-}
-
-class SplashScreen extends StatefulWidget {
-  @override
-  _SplashScreenState createState() => _SplashScreenState();
-}
-
-class _SplashScreenState extends State<SplashScreen> {
-  @override
-  void initState() {
-    super.initState();
-    _checkAuth();
-  }
-
-  void _checkAuth() async {
-    final session = Supabase.instance.client.auth.currentSession;
-
-    await Future.delayed(const Duration(seconds: 2)); // ロゴとか表示用
-    if (session == null) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-    } else {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+      home: const InventoryListScreen(), // ← いつもの初期画面
     );
   }
 }

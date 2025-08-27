@@ -1,7 +1,6 @@
 // lib/manage_locations_screen.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../supabase_service.dart';
 
 /// 場所管理（追加・削除／RPCで一括削除）
 class ManageLocationsScreen extends StatefulWidget {
@@ -48,12 +47,18 @@ class _ManageLocationsScreenState extends State<ManageLocationsScreen> {
     }
     setState(() => _loading = true);
     try {
-      final companyId = await SupaService.i.myCompanyId();
-      await _c.from('locations').insert({
-        'name': name,
-        'type': 'other',
-        'company_id': companyId,
-      });
+      // 重複チェック
+      final exists = await _c
+          .from('locations')
+          .select('id')
+          .eq('name', name)
+          .maybeSingle();
+      if (exists != null) {
+        _showSnack('同じ名前の場所が既にあります');
+        return;
+      }
+      // type は NOT NULL の可能性があるため既定で other を入れる
+      await _c.from('locations').insert({'name': name, 'type': 'other'});
       _nameCtrl.clear();
       await _refresh();
       _showSnack('追加しました');
