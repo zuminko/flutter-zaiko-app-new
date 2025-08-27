@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'inventory_list_screen.dart';
 import 'harvest_input_screen.dart';
 import 'history_screen.dart';
 import 'scan_screen.dart';
 import 'manage_varieties_screen.dart';
 import 'manage_locations_screen.dart';
+import 'login_screen.dart'; // Import the LoginScreen
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -15,6 +17,19 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('ホーム'),
         backgroundColor: Colors.green,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (route) => false,
+              );
+            },
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20.0),
