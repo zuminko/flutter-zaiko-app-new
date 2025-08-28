@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // Supabase パッケージをインポート
-import 'inventory_list_screen.dart';
+import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -18,20 +18,11 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    final supabase = Supabase.instance.client; // Supabaseインスタンスを取得
-    final session = supabase.auth.currentSession;
-    if (session != null) {
-      // すでにログイン済みなら一覧へ自動遷移
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const InventoryListScreen()),
-        );
-      });
-    }
+    // ★ セッションチェック処理は削除
   }
 
   Future<void> _login() async {
+    print('ログイン開始'); // デバッグログ追加
     setState(() {
       _loading = true;
       _errorMessage = null;
@@ -41,17 +32,30 @@ class _LoginScreenState extends State<LoginScreen> {
       final supabase = Supabase.instance.client; // Supabaseインスタンスを取得
       final email = _emailController.text.trim();
       final password = _passwordController.text.trim();
+
+      print('Email: $email, Password length: ${password.length}'); // デバッグログ追加
+
+      if (email.isEmpty || password.isEmpty) {
+        setState(() {
+          _errorMessage = 'メールアドレスとパスワードを入力してください';
+        });
+        return;
+      }
+
       final AuthResponse res = await supabase.auth.signInWithPassword(
         email: email,
         password: password,
       );
 
+      print('ログインレスポンス: ${res.session != null}'); // デバッグログ追加
+      print("DEBUG login user.id = \\${res.user?.id}");
+
       if (res.session != null) {
-        // ログイン成功 → 在庫一覧画面へ
+        // ログイン成功 → ホーム画面へ
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const InventoryListScreen()),
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
         );
       } else {
         setState(() {
@@ -59,6 +63,7 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       }
     } catch (e) {
+      print('ログインエラー: $e'); // デバッグログ追加
       setState(() {
         _errorMessage = 'ログインに失敗しました: $e';
       });
@@ -70,23 +75,106 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _signUp() async {
+    print('新規登録開始'); // デバッグログ追加
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+
     try {
       final supabase = Supabase.instance.client; // Supabaseインスタンスを取得
       final email = _emailController.text.trim();
       final password = _passwordController.text.trim();
+
+      print(
+          'SignUp Email: $email, Password length: ${password.length}'); // デバッグログ追加
+
+      if (email.isEmpty || password.isEmpty) {
+        setState(() {
+          _errorMessage = 'メールアドレスとパスワードを入力してください';
+        });
+        return;
+      }
+
       final response = await supabase.auth.signUp(
         email: email,
         password: password,
       );
-      if (response.user != null) {
-        setState(() {
-          _errorMessage = "登録しました。ログインしてください。";
-        });
-      }
+
+      print('新規登録レスポンス: ${response.user != null}'); // デバッグログ追加
+
+      final user = response.user;
+      if (user == null) throw Exception("サインアップに失敗しました");
+
+      final uid = user.id;
+
+      // 1. users テーブルに行を作成（まだ存在しなければ）
+      await Supabase.instance.client.from('users').insert({
+        'id': uid,
+        'role': 'member',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      // 2. 会社を自動作成
+      final company = await Supabase.instance.client
+          .from('companies')
+          .insert({
+            'name': '${email}の会社',
+            'invite_code': 'AUTO-${DateTime.now().millisecondsSinceEpoch}',
+            'created_by': uid,
+          })
+          .select('id')
+          .single();
+
+      final companyId = company['id'];
+
+      // 3. users.company_id を更新
+      await Supabase.instance.client.from('users').update({
+        'company_id': companyId,
+      }).eq('id', uid);
+
+      print("DEBUG: ユーザー $uid を会社 $companyId に所属させました");
+
+      setState(() {
+        _errorMessage = "登録しました。ログインしてください。";
+      });
     } catch (e) {
+      print('新規登録エラー: $e'); // デバッグログ追加
       setState(() {
         _errorMessage = '登録に失敗しました: $e';
       });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() {
+        _errorMessage = 'パスワードリセットにはメールアドレスが必要です';
+      });
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase.auth.resetPasswordForEmail(email);
+      setState(() {
+        _errorMessage = 'パスワードリセットメールを送信しました。メールを確認してください。';
+      });
+    } catch (e) {
+      print('パスワードリセットエラー: $e');
+      setState(() {
+        _errorMessage = 'パスワードリセットに失敗しました: $e';
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -121,8 +209,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: const Text("ログイン"),
                       ),
                       TextButton(
-                        onPressed: _signUp,
-                        child: const Text("新規登録"),
+                        onPressed: () {
+                          Navigator.pushNamed(context, '/signup');
+                        },
+                        child: const Text("新規登録はこちら"),
+                      ),
+                      TextButton(
+                        onPressed: _resetPassword,
+                        child: const Text("パスワードを忘れた場合"),
                       ),
                     ],
                   ),

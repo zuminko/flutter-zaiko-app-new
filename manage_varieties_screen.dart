@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../supabase_service.dart';
+
 /// 品種管理（追加・削除／強制削除）
 class ManageVarietiesScreen extends StatefulWidget {
   const ManageVarietiesScreen({super.key});
@@ -20,13 +22,20 @@ class _ManageVarietiesScreenState extends State<ManageVarietiesScreen> {
   @override
   void initState() {
     super.initState();
+    print('>>> initState: _loading=$_loading');
     _refresh();
   }
 
   Future<void> _refresh() async {
     setState(() => _loading = true);
     try {
-      final rows = await _c.from('varieties').select('id,name').order('id');
+      final companyId = await SupaService.i.myCompanyId();
+      final rows = await _c
+          .from('varieties')
+          .select('id,name')
+          .eq('company_id', companyId) // ← フィルタ追加
+          .order('id');
+
       setState(() => _rows = List<Map<String, dynamic>>.from(rows as List));
     } catch (e) {
       _showSnack('品種一覧の取得に失敗: $e');
@@ -36,6 +45,7 @@ class _ManageVarietiesScreenState extends State<ManageVarietiesScreen> {
   }
 
   Future<void> _add() async {
+    print('>>> _add メソッドが呼び出されました');
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       _showSnack('品種名を入力してください');
@@ -43,21 +53,25 @@ class _ManageVarietiesScreenState extends State<ManageVarietiesScreen> {
     }
     setState(() => _loading = true);
     try {
-      // 重複チェック（同名があれば追加しない）
-      final exists = await _c
-          .from('varieties')
-          .select('id')
-          .eq('name', name)
-          .maybeSingle();
-      if (exists != null) {
-        _showSnack('その品種は既にあります');
-        return;
-      }
-      await _c.from('varieties').insert({'name': name});
+      final uid = _c.auth.currentUser?.id; // ログ用
+      print("DEBUG: currentUser.id = $uid"); // ← 追加
+
+      final companyId = await SupaService.i.myCompanyId();
+      print("DEBUG: myCompanyId = $companyId"); // ← 追加
+
+      print(
+          '>>> inserting variety: name=$name, companyId=$companyId, created_by=$uid');
+
+      await _c.from('varieties').insert({
+        'name': name,
+        'company_id': companyId,
+      });
+
       _nameCtrl.clear();
       await _refresh();
       _showSnack('追加しました');
     } catch (e) {
+      print('>>> エラー発生: $e');
       _showSnack('追加に失敗: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -87,7 +101,7 @@ class _ManageVarietiesScreenState extends State<ManageVarietiesScreen> {
 
     setState(() => _loading = true);
     try {
-      // まず通常削除を試す（削除件数を確認するため select を付ける）
+      // 削除リクエスト時に id (bigint) を使用
       final res = await _c.from('varieties').delete().eq('id', id).select('id');
       final deleted = (res as List).isNotEmpty;
 
@@ -227,7 +241,12 @@ class _ManageVarietiesScreenState extends State<ManageVarietiesScreen> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _loading ? null : _add,
+                  onPressed: _loading
+                      ? null
+                      : () {
+                          print('>>> ボタンが押されました, _loading=$_loading');
+                          _add();
+                        },
                   child: const Text('追加'),
                 ),
               ],

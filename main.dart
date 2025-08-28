@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:app_links/app_links.dart'; // ← uni_links から app_links に変更
+import 'package:app_links/app_links.dart';
 import 'dart:async';
 
-import 'inventory_list_screen.dart';
-import 'harvest_input_screen.dart';
-import 'history_screen.dart';
-import 'manage_varieties_screen.dart';
-import 'manage_locations_screen.dart';
-import 'reset_password_screen.dart'; // ← 作成済みなら
+import 'login_screen.dart';
+import 'home_screen.dart';
+import 'reset_password_screen.dart';
+import 'supabase_service.dart';
+import 'signup_screen.dart'; // ←追加
 
 final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -22,7 +21,15 @@ Future<void> main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
-  runApp(const MyApp());
+  runApp(MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: LoginScreen(), // ← 起動時は必ずログイン画面
+    routes: {
+      '/home': (context) => HomeScreen(),
+      '/login': (context) => LoginScreen(),
+      '/signup': (context) => SignupScreen(), // ←追加
+    },
+  ));
 }
 
 class MyApp extends StatefulWidget {
@@ -79,7 +86,44 @@ class _MyAppState extends State<MyApp> {
       navigatorKey: navigatorKey,
       title: '在庫管理',
       theme: ThemeData(primarySwatch: Colors.green),
-      home: const InventoryListScreen(), // ← いつもの初期画面
+      home: SplashScreen(),
+    );
+  }
+}
+
+class SplashScreen extends StatefulWidget {
+  @override
+  _SplashScreenState createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAuth();
+  }
+
+  void _checkAuth() async {
+    final session = Supabase.instance.client.auth.currentSession;
+
+    await Future.delayed(const Duration(seconds: 2)); // ロゴとか表示用
+    if (session == null) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }

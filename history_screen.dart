@@ -3,7 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'supabase_service.dart';
-import 'package:harvest_app/utils/date_format.dart';
+import 'utils/date_format.dart';
 import 'package:csv/csv.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
