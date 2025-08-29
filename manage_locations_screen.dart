@@ -30,6 +30,7 @@ class _ManageLocationsScreenState extends State<ManageLocationsScreen> {
       final rows = await _c
           .from('locations')
           .select('id,name,type')
+          .eq('is_active', true) // Filter only active locations
           .neq('name', '未設定') // 「未設定」を除外
           .order('id');
       setState(() => _rows = List<Map<String, dynamic>>.from(rows as List));
@@ -50,6 +51,7 @@ class _ManageLocationsScreenState extends State<ManageLocationsScreen> {
     try {
       final uid = Supabase.instance.client.auth.currentUser?.id;
       final companyId = await SupaService.i.myCompanyId();
+      print("DEBUG companyId = $companyId"); // ← 追加
       debugPrint(
           '>>> inserting location: uid=$uid, companyId=$companyId, name=$name');
       await _c.from('locations').insert({
@@ -91,9 +93,10 @@ class _ManageLocationsScreenState extends State<ManageLocationsScreen> {
 
     setState(() => _loading = true);
     try {
-      await _c.rpc('delete_location_cascade', params: {
-        'loc_id': id, // ← bigint のまま渡す
-      });
+      await _c
+          .from('locations')
+          .update({'is_active': false}) // Logical deletion
+          .eq('id', id);
       await _refresh();
       _showSnack('削除しました');
     } catch (e) {

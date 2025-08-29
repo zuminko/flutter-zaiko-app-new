@@ -95,7 +95,7 @@ class SupaService {
   Future<void> deleteLocation(int id) async {
     try {
       final used = await _c
-          .from('moves') // ← stock_moves ではなく moves
+          .from('stock_moves') // Updated from 'moves' to 'stock_moves'
           .select('id')
           .eq('location_id', id)
           .limit(1)
@@ -194,15 +194,23 @@ class SupaService {
   /// 在庫履歴（ビュー）
   Future<List<Map<String, dynamic>>> fetchHistory({
     int limit = 50,
+    int offset = 0, // Added offset parameter
     bool descending = true,
+    List<String>? varieties,
+    List<String>? locations,
+    List<String>? directions,
   }) async {
-    final rows = await _c
-        .from('move_history_view')
-        .select(
-            'created_at,direction,qty,unit,memo,lot_id,variety_name,location_name')
-        .order('created_at', ascending: !descending)
-        .limit(limit);
-    return List<Map<String, dynamic>>.from(rows as List);
+    final payload = {
+      'p_limit': limit,
+      'p_offset': offset, // Added offset to payload
+      'p_desc': descending,
+      'p_variety': varieties,
+      'p_location': locations,
+      'p_direction': directions,
+    };
+
+    final res = await _c.rpc('fetch_history', params: payload);
+    return List<Map<String, dynamic>>.from(res);
   }
 
   /// 在庫行（ロット）を削除（在庫が0の時だけ）
@@ -221,8 +229,11 @@ class SupaService {
         throw Exception('在庫が残っているため削除できません（先に出庫または調整で0にしてください）');
       }
 
-      // 先に子（moves）を削除 → 親（harvest_lots）を削除
-      await _c.from('moves').delete().eq('lot_id', lotId); // ← 修正
+      // 先に子（stock_moves）を削除 → 親（harvest_lots）を削除
+      await _c
+          .from('stock_moves')
+          .delete()
+          .eq('lot_id', lotId); // Updated from 'moves' to 'stock_moves'
       await _c.from('harvest_lots').delete().eq('id', lotId);
     } catch (e) {
       throw Exception('ロット削除に失敗しました: $e');
@@ -401,9 +412,6 @@ class SupaService {
     DateTime? date,
     String? memo,
   }) async {
-    final locName = await _getLocationName(locationId) ?? '未設定';
-    final d = date ?? DateTime.now();
-    final dateStr = _yyyyMmDd(d);
     final lotCode = _generateLotCode();
     final companyId = await myCompanyId();
     final uid = _c.auth.currentUser?.id;
@@ -415,9 +423,12 @@ class SupaService {
         .insert({
           'company_id': companyId,
           'variety_id': varietyId,
-          'date': dateStr,
-          'field': _sanitize(locName),
+          'location_id': locationId, // Corrected from 'field' to 'location_id'
           'cases': cases,
+          'date': (date ?? DateTime.now())
+              .toIso8601String()
+              .split('T')
+              .first, // Store only the date part
           'lot_code': lotCode,
           if (uid != null) 'created_by': uid,
           if (memo != null && memo.isNotEmpty) 'memo': _sanitize(memo),
@@ -425,22 +436,6 @@ class SupaService {
         .select('id, lot_code')
         .single();
     return Map<String, dynamic>.from(inserted as Map);
-  }
-
-  Future<String?> _getLocationName(int locationId) async {
-    try {
-      final row = await _c
-          .from('locations')
-          .select('name')
-          .eq('id', locationId)
-          .limit(1)
-          .maybeSingle();
-      if (row == null) return null;
-      final name = row['name'];
-      return name is String ? name : name?.toString();
-    } catch (_) {
-      return null;
-    }
   }
 
   String _yyyyMmDd(DateTime d) {
@@ -466,12 +461,14 @@ class SupaService {
       'lot_id': lotId,
       'location_id': locationId,
       'direction': direction,
-      'qty': qty,
+      'quantity': qty, // ← 修正！ (qty → quantity)
       'unit': unit,
       if (uid != null) 'created_by': uid,
       if (memo != null && memo.trim().isNotEmpty) 'memo': _sanitizeMemo(memo),
     };
-    await _c.from('moves').insert(map);
+    await _c
+        .from('stock_moves')
+        .insert(map); // Updated from 'moves' to 'stock_moves'
   }
 
   /// A→B へ数量を移動（ OUT@A → IN@B ）
@@ -635,7 +632,7 @@ class SupaService {
     final row = await _c
         .from('profiles')
         .select('company_id')
-        .eq('id', uid)
+        .eq('user_id', uid) // Corrected from 'id' to 'user_id'
         .maybeSingle();
     if (row == null) return null;
     final v = row['company_id'];

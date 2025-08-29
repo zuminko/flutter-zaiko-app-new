@@ -57,7 +57,7 @@ class _ManageVarietiesScreenState extends State<ManageVarietiesScreen> {
       print("DEBUG: currentUser.id = $uid"); // ← 追加
 
       final companyId = await SupaService.i.myCompanyId();
-      print("DEBUG: myCompanyId = $companyId"); // ← 追加
+      print("DEBUG companyId = $companyId"); // ← 追加
 
       print(
           '>>> inserting variety: name=$name, companyId=$companyId, created_by=$uid');
